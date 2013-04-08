@@ -70,6 +70,8 @@ static uint8_t offStateConfigs[6][8] = {
 #define CPU_16MHz       0x00
 #define CPU_8MHz        0x01
 
+#define MODE_KB 1
+#define MODE_IPAD 2
 
 uint8_t onStates[8];
 uint8_t offStates[8];
@@ -87,6 +89,7 @@ uint8_t currentConfig = 0;
 uint8_t maxConfig = 5;
 uint8_t needsDebounce = 0;
 uint8_t buttonState;
+
 
 /**
  * Activates a configuration by id
@@ -109,6 +112,10 @@ void setConfig(uint8_t config){
 
 int main(void)
 {
+	uint8_t currentMode;
+	uint8_t keyNum;
+	uint8_t lastState;
+
 	CPU_PRESCALE(CPU_16MHz);
 	
 	LED_CONFIG;	
@@ -126,13 +133,20 @@ int main(void)
 	 */
 	DDRC = (1<<4);	// Set port direction
 	PORTC = (1<<7);	// Enable internal pullups
-	
+
+	/* Initialize USB */
 	LED_ON;
 	usb_init();
 	while (!usb_configured()) // Wait until usb is configured
 	_delay_ms(1000);
 	LED_OFF;
-	
+
+        /* Select mode by holding Joystick during power-up */
+	if ((PINB & 1) == 0) { currentMode = MODE_KB; eeprom_write_byte(1,currentMode); } // up = Keyboard mode
+	else if ((PINB & 2) == 0) { currentMode = MODE_IPAD; eeprom_write_byte(1,currentMode); } // down = iPad mode	
+	else { currentMode = eeprom_read_byte(1); }
+
+	/* get Config */	
 	currentConfig = eeprom_read_byte(0);
 	if(currentConfig >= maxConfig){
 		currentConfig = 0;
@@ -142,7 +156,7 @@ int main(void)
 	}
 	setConfig(currentConfig);
 	
-	while (1) {		
+	while (currentMode == MODE_IPAD) {	
 		#if defined(ATARI_2_BUTTONS)
 		// Switch to inverted button mode (for Atari 7800 controllers)
 		buttonState = (PINC & (1<<6));
@@ -293,6 +307,63 @@ int main(void)
 			needsDebounce = 1;
 		}
 		
+		// Ugly debounce, do someting about it ;-)
+		if(needsDebounce == 1){
+			needsDebounce = 0;
+			_delay_ms(DEBOUNCE_TIME);
+		}
+	}
+
+	while(currentMode == MODE_KB)
+	{
+		if (PINB != lastState)
+		{
+			// Reset keys
+			for(keyNum=0;keyNum<6;keyNum++) { keyboard_keys[keyNum] = 0; }
+			keyboard_modifier_keys = 0;
+			keyNum = 0;
+
+			// Up Button
+			if(!(PINB & 1))
+			{
+				keyboard_keys[keyNum] = KEY_UP;
+				keyNum++;
+			}
+			// Down Button
+			if(!(PINB & (1<<1)))
+			{
+				keyboard_keys[keyNum] = KEY_DOWN;
+				keyNum++;
+			}
+			// Left Button
+			if(!(PINB & (1<<2)))
+			{
+				keyboard_keys[keyNum] = KEY_LEFT;
+				keyNum++;
+			}
+			// Right Button
+			if(!(PINB & (1<<3)))
+			{
+				keyboard_keys[keyNum] = KEY_RIGHT;
+				keyNum++;
+			}
+			// A Button
+			if(!(PINB & (1<<4)))
+			{
+				keyboard_modifier_keys |= KEY_RIGHT_CTRL;
+			}
+
+			// send keypresses via USB
+			usb_keyboard_send();
+			needsDebounce = 1;
+
+			// save state to detect changes
+			lastState = PINB;
+		}
+
+
+
+
 		// Ugly debounce, do someting about it ;-)
 		if(needsDebounce == 1){
 			needsDebounce = 0;
